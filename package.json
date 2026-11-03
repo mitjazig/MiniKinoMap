@@ -11,7 +11,6 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@tailwindcss/oxide-win32-x64-msvc": "^4.3.4",
     "idb": "^8.0.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -33,5 +32,8 @@
     "typescript-eslint": "^8.33.1",
     "vite": "^6.3.5",
     "vitest": "^3.2.1"
+  },
+  "optionalDependencies": {
+    "@tailwindcss/oxide-win32-x64-msvc": "^4.3.4"
   }
 }
