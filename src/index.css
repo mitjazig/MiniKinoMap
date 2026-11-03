@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+@theme {
+  --font-ui: "Sora", "Segoe UI", sans-serif;
+  --font-metric: "Teko", "Arial Narrow", sans-serif;
+  --color-asphalt: #14181d;
+  --color-deck: #1c242c;
+  --color-panel: #24303a;
+  --color-ink: #101417;
+  --color-paper: #f3efe4;
+  --color-mist: #9aa4ad;
+  --color-line: #33414c;
+  --color-amber: #f0a202;
+  --color-ember: #e36b4f;
+  --color-tide: #8fd0bf;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-asphalt);
+  color: var(--color-paper);
+  font-family: var(--font-ui);
+  color-scheme: dark;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-amber);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
