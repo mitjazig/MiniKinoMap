@@ -19,7 +19,7 @@ function route(
     id,
     name,
     description,
-    videoUrl: `/videos/${videoFile}`,
+    videoUrl: `${import.meta.env.BASE_URL}videos/${videoFile}`,
     castCompatible: false,
     totalDistanceMeters: total,
     videoDurationSeconds: durationFor(total),

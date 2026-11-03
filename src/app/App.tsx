@@ -12,7 +12,7 @@ import { YouTubeRouteFormPage } from '../pages/YouTubeRouteFormPage';
 
 export function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
       <Routes>
         <Route element={<AppShell />}>
           <Route path="/" element={<HomePage />} />

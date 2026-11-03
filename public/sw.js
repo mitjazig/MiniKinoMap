@@ -1,5 +1,8 @@
-const CACHE = 'runscape-shell-v1';
-const SHELL = ['/', '/index.html', '/favicon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/manifest.webmanifest'];
+const CACHE = 'runscape-shell-v2';
+const BASE = new URL('./', self.location).pathname;
+const SHELL = ['', 'index.html', 'favicon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'manifest.webmanifest'].map(
+  (path) => BASE + path,
+);
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -24,7 +27,7 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith('/videos/')) return;
+  if (url.pathname.includes('/videos/')) return;
 
   event.respondWith(
     fetch(request)
@@ -39,7 +42,7 @@ self.addEventListener('fetch', (event) => {
         const cached = await caches.match(request);
         if (cached) return cached;
         if (request.mode === 'navigate') {
-          const shell = await caches.match('/index.html');
+          const shell = await caches.match(BASE + 'index.html');
           if (shell) return shell;
         }
         return new Response('Offline', { status: 503, statusText: 'Offline' });
@@ -48,5 +51,5 @@ self.addEventListener('fetch', (event) => {
 });
 
 function shouldCache(pathname) {
-  return /\.(?:js|css|html|svg|png|webmanifest)$/.test(pathname) || pathname === '/';
+  return /\.(?:js|css|html|svg|png|webmanifest)$/.test(pathname) || pathname === BASE || pathname === BASE.slice(0, -1);
 }
