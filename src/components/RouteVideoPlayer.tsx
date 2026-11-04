@@ -129,7 +129,7 @@ export function RouteVideoPlayer({ route, traveledMeters, speedKmh, hold, initia
   const progress = routeProgress(traveledMeters, route.totalDistanceMeters);
 
   return (
-    <div className="relative h-full min-h-[42vh] overflow-hidden bg-ink">
+    <div className="route-video relative h-full min-h-[42vh] overflow-hidden bg-ink">
       <video
         ref={videoRef}
         key={route.id}

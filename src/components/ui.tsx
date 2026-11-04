@@ -45,13 +45,13 @@ export function Button({ variant = 'quiet', className = '', type = 'button', ...
 }
 
 export function Screen({ children }: { children: ReactNode }) {
-  return <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-5">{children}</div>;
+  return <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-5 shortland:gap-3 shortland:py-3">{children}</div>;
 }
 
 export function PageTitle({ title, detail }: { title: string; detail?: string }) {
   return (
     <header>
-      <h1 className="font-metric text-5xl leading-none tracking-wide text-paper">{title}</h1>
+      <h1 className="font-metric text-5xl leading-none tracking-wide text-paper shortland:text-4xl">{title}</h1>
       {detail ? <p className="mt-2 max-w-prose text-sm leading-6 text-mist">{detail}</p> : null}
     </header>
   );

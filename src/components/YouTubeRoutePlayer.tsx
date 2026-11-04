@@ -111,12 +111,14 @@ export function YouTubeRoutePlayer({
   }, [videoId]);
 
   return (
-    <div className="w-full bg-ink">
-      <div className="w-full" style={{ aspectRatio: '16 / 9' }}>
-        <div ref={hostRef} className="h-full w-full" />
+    <>
+      <div className="video-frame bg-ink">
+        <div className="aspect-video h-full w-full">
+          <div ref={hostRef} className="h-full w-full" />
+        </div>
       </div>
       {playerError ? <p className="px-4 py-3 text-sm leading-6 text-ember">{playerError}</p> : null}
-    </div>
+    </>
   );
 }
 

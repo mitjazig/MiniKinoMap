@@ -13,17 +13,19 @@ export function AppShell() {
   const workout = useSession((state) => state.workout);
   const active = isWorkoutActive(workout.phase);
   return (
-    <div className="min-h-dvh pb-24">
-      {active ? (
-        <NavLink
-          to={`/workout/${workout.routeId ?? ''}`}
-          className="block bg-amber px-4 py-3 text-center text-sm font-medium text-ink"
-        >
-          Run in progress · tap to return
-        </NavLink>
-      ) : null}
-      <Outlet />
-      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-asphalt/95 pb-[env(safe-area-inset-bottom)]">
+    <div className="app-shell min-h-dvh pb-24">
+      <div className="app-main">
+        {active ? (
+          <NavLink
+            to={`/workout/${workout.routeId ?? ''}`}
+            className="block bg-amber px-4 py-3 text-center text-sm font-medium text-ink"
+          >
+            Run in progress · tap to return
+          </NavLink>
+        ) : null}
+        <Outlet />
+      </div>
+      <nav className="app-nav fixed inset-x-0 bottom-0 z-20 border-t border-line bg-asphalt/95 pb-[env(safe-area-inset-bottom)]">
         <ul className="mx-auto grid max-w-3xl grid-cols-4">
           {links.map((link) => (
             <li key={link.to}>

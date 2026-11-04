@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant shortland (@media (orientation: landscape) and (max-height: 540px));
+
 @theme {
   --font-ui: "Sora", "Segoe UI", sans-serif;
   --font-metric: "Teko", "Arial Narrow", sans-serif;
@@ -40,6 +42,114 @@ input:focus-visible,
 select:focus-visible {
   outline: 2px solid var(--color-amber);
   outline-offset: 2px;
+}
+
+.workout-screen {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: 72rem;
+  margin-inline: auto;
+  min-height: 0;
+}
+
+.workout-video {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.workout-stats {
+  display: flex;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.video-frame,
+.route-video {
+  width: 100%;
+}
+
+.video-frame iframe {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+@media (min-width: 768px), ((orientation: landscape) and (max-height: 540px)) {
+  .workout-screen {
+    flex-direction: row;
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  .workout-video {
+    container-type: size;
+    height: 100%;
+    flex: 1 1 auto;
+  }
+
+  .workout-video .video-frame,
+  .workout-video .route-video {
+    width: min(100cqw, calc(100cqh * 16 / 9));
+    max-height: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+    min-height: 0;
+  }
+
+  .workout-stats {
+    width: min(42vw, 17.5rem);
+    height: 100%;
+    flex: none;
+  }
+}
+
+@media (min-width: 768px) and (min-height: 541px) {
+  .workout-stats {
+    width: 380px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 540px) {
+  .app-shell {
+    display: flex;
+    height: 100dvh;
+    min-height: 0;
+    flex-direction: row;
+    padding-bottom: 0;
+    padding-left: env(safe-area-inset-left);
+  }
+
+  .app-main {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+  }
+
+  .app-nav {
+    position: static;
+    width: 5.5rem;
+    height: 100%;
+    flex: none;
+    border-top: 0;
+    border-right: 1px solid var(--color-line);
+    padding-bottom: 0;
+  }
+
+  .app-nav ul {
+    display: flex;
+    height: 100%;
+    flex-direction: column;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -90,8 +90,8 @@ export function WorkoutPage() {
   const canChoosePlan = workout.phase === 'idle' || workout.phase === 'ready' || workout.phase === 'finished';
 
   return (
-    <div className="mx-auto flex h-dvh max-w-6xl flex-col md:flex-row">
-      <div className={youtube ? 'w-full md:min-h-0 md:flex-1' : 'relative min-h-0 flex-1'}>
+    <div className="workout-screen">
+      <div className={youtube ? 'workout-video' : 'workout-video relative'}>
         {youtube ? (
           <YouTubeRoutePlayer
             route={route}
@@ -102,7 +102,7 @@ export function WorkoutPage() {
             onDebug={reportYouTubeDebug}
           />
         ) : casting ? (
-          <div className="flex h-full min-h-[42vh] flex-col items-center justify-center gap-3 bg-ink px-6 text-center">
+          <div className="route-video flex h-full min-h-[42vh] flex-col items-center justify-center gap-3 bg-ink px-6 text-center">
             <p className="text-sm tracking-wide text-amber">CASTING TO TV</p>
             <p className="font-metric text-5xl leading-none">{route.name}</p>
             <p className="text-mist">
@@ -165,14 +165,14 @@ export function WorkoutPage() {
         ) : null}
       </div>
 
-      <section className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto bg-asphalt px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:w-[380px]">
+      <section className="workout-stats gap-4 bg-asphalt px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] shortland:gap-2 shortland:px-3 shortland:py-2">
         <div className="flex items-center justify-between">
           <p className="text-sm text-mist">{source === 'simulator' ? 'Simulator' : 'Bluetooth'}</p>
           {source === 'simulator' ? <SimulatorBadge /> : null}
         </div>
 
         <div>
-          <p className="font-metric text-8xl leading-none text-amber">{formatKmh(workout.liveSpeedKmh, 1)}</p>
+          <p className="font-metric text-8xl leading-none text-amber shortland:text-6xl">{formatKmh(workout.liveSpeedKmh, 1)}</p>
           <p className="text-mist">km/h</p>
         </div>
 
@@ -266,7 +266,7 @@ export function WorkoutPage() {
           <p className="text-sm text-mist">Connect the simulator or a treadmill before starting.</p>
         ) : null}
 
-        <div className="mt-auto grid grid-cols-2 gap-2">
+        <div className="sticky bottom-0 mt-auto grid grid-cols-2 gap-2 bg-asphalt pt-2">
           {workout.phase === 'running' ? (
             <Button variant="primary" onClick={() => void pauseWorkout()}>
               Pause
@@ -379,7 +379,7 @@ function Metric({ label, value, unit, detail }: { label: string; value: string; 
   return (
     <div>
       <dt className="text-sm text-mist">{label}</dt>
-      <dd className="font-metric text-5xl leading-none">
+      <dd className="font-metric text-5xl leading-none shortland:text-4xl">
         {value}
         {unit ? <span className="ml-1 text-2xl text-mist">{unit}</span> : null}
       </dd>
