@@ -9,6 +9,7 @@ import type { Route, RouteDifficulty } from '../routes/routeTypes';
 import { useSession } from '../state/sessionStore';
 import { formatDistanceKm, formatDuration } from '../utils/format';
 import { youTubeThumbnailUrl } from '../youtube/parseYouTubeUrl';
+import { YOUTUBE_PLACEHOLDER_ID } from '../youtube/youtubeWalks';
 
 type Filter = 'all' | 'mountain' | 'walking' | 'easy' | 'moderate' | 'hard' | 'youtube' | 'native';
 
@@ -90,6 +91,9 @@ function RouteCard({ route, onDelete }: { route: Route; onDelete: () => void }) 
         {route.tags?.includes('walking') || route.tags?.includes('hiking') ? ' · Walking' : ''}
       </p>
       {route.description ? <p className="mt-2 max-w-prose text-sm leading-6 text-mist">{route.description}</p> : null}
+      {videoId === YOUTUBE_PLACEHOLDER_ID ? (
+        <p className="mt-2 text-sm leading-6 text-amber">Placeholder video. Add your own embeddable walk.</p>
+      ) : null}
       <p className="mt-2 text-sm text-paper">
         {scenic ? 'Scenic' : null}
         {!scenic && route.totalDistanceMeters > 0 ? `${formatDistanceKm(route.totalDistanceMeters, 1)} km` : null}
