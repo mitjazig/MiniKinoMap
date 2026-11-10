@@ -18,6 +18,7 @@ import type { GattReport } from '../treadmill/bluetooth/BleInspector';
 import type { ConnectionState, LogEntry, PacketTrace, SourceKind, TreadmillData } from '../treadmill/types';
 import type { TreadmillTransport } from '../treadmill/TreadmillTransport';
 import { resolveCastUrl } from '../video/castAccess';
+import { loadCastFramework } from '../video/loadCastFramework';
 import type { VideoDebugSnapshot } from '../video/types';
 import { emptyVideoDebug } from '../video/types';
 import { YOUTUBE_CAST_MESSAGE } from '../youtube/youtubeErrors';
@@ -764,6 +765,7 @@ export async function bootstrap() {
   wireSensors();
   if (holder.__runscapeBoot) return;
   holder.__runscapeBoot = true;
+  void loadCastFramework();
   loadSettings();
   appRuntime.engine.setHeartRatePreference(appRuntime.settings.hrPreference);
   useSession.setState({

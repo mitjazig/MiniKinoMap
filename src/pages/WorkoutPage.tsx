@@ -6,13 +6,16 @@ import { RouteVideoPlayer } from '../components/RouteVideoPlayer';
 import { SimulatorPanel } from '../components/SimulatorPanel';
 import { YouTubeRoutePlayer } from '../components/YouTubeRoutePlayer';
 import { Button, SimulatorBadge } from '../components/ui';
+import { SIMULATOR_MAX_SPEED_KMH } from '../config';
 import { heartRateZone } from '../heartRate/zones';
+import { appRuntime } from '../state/runtime';
 import { mediaOf } from '../routes/mediaOf';
 import { getRouteById } from '../routes/routeCatalog';
 import { useSession } from '../state/sessionStore';
 import { formatDistanceKm, formatDuration, formatKmh } from '../utils/format';
 import { formatPace } from '../utils/pace';
 import { YOUTUBE_CAST_MESSAGE } from '../youtube/youtubeErrors';
+import { youTubeWatchUrl } from '../youtube/parseYouTubeUrl';
 import { getWalkingWorkout, walkingWorkouts } from '../workout/walkingWorkouts';
 
 export function WorkoutPage() {
@@ -88,6 +91,8 @@ export function WorkoutPage() {
   const synced = youtube && route.playbackMode === 'synced' && route.totalDistanceMeters > 0;
   const plan = getWalkingWorkout(programId);
   const canChoosePlan = workout.phase === 'idle' || workout.phase === 'ready' || workout.phase === 'finished';
+  const walking = running || workout.phase === 'paused' || lost;
+  const freeSimulator = walking && source === 'simulator' && plan.id === 'free';
 
   return (
     <div className="workout-screen">
@@ -166,18 +171,27 @@ export function WorkoutPage() {
       </div>
 
       <section className="workout-stats gap-4 bg-asphalt px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] shortland:gap-2 shortland:px-3 shortland:py-2">
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-mist">{source === 'simulator' ? 'Simulator' : 'Bluetooth'}</p>
-          {source === 'simulator' ? <SimulatorBadge /> : null}
-        </div>
+        {walking ? null : (
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-mist">{source === 'simulator' ? 'Simulator' : 'Bluetooth'}</p>
+            {source === 'simulator' ? <SimulatorBadge /> : null}
+          </div>
+        )}
 
         <div>
           <p className="font-metric text-8xl leading-none text-amber shortland:text-6xl">{formatKmh(workout.liveSpeedKmh, 1)}</p>
           <p className="text-mist">km/h</p>
         </div>
 
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-4">
-          <Metric label="Pace" value={formatPace(workout.liveSpeedKmh)} unit="/km" />
+        {freeSimulator ? (
+          <div className="grid grid-cols-2 gap-2">
+            <Button onClick={() => void appRuntime.simulator.setTargetSpeed(stepSpeed(workout.liveSpeedKmh, -0.5))}>−0.5</Button>
+            <Button onClick={() => void appRuntime.simulator.setTargetSpeed(stepSpeed(workout.liveSpeedKmh, 0.5))}>+0.5</Button>
+          </div>
+        ) : null}
+
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-4 shortland:gap-y-2">
+          {walking ? null : <Metric label="Pace" value={formatPace(workout.liveSpeedKmh)} unit="/km" />}
           <Metric label="Distance" value={formatDistanceKm(workout.distanceMeters)} unit="km" />
           <Metric label="Time" value={formatDuration(workout.activeSeconds)} />
           <Metric label="Incline" value={formatKmh(workout.liveInclinePercent, 1)} unit="%" />
@@ -191,7 +205,13 @@ export function WorkoutPage() {
 
         {youtube ? (
           <div className="text-sm leading-6 text-mist">
-            {synced ? (
+            {walking ? (
+              <p>
+                {synced
+                  ? `Video ${formatDuration(youtubeDebug.currentTime)}`
+                  : `Video ${formatDuration(youtubeDebug.currentTime)}${youtubeDebug.duration > 0 ? ` / ${formatDuration(youtubeDebug.duration)}` : ''} · Scenic`}
+              </p>
+            ) : synced ? (
               <>
                 <p>
                   Route {formatDistanceKm(workout.distanceMeters)} / {formatDistanceKm(route.totalDistanceMeters)} km
@@ -222,43 +242,45 @@ export function WorkoutPage() {
           </div>
         ) : null}
 
-        <label className="flex flex-col gap-2 text-sm">
-          <span className="text-mist">Workout</span>
-          <select
-            className="min-h-12 rounded-md border border-line bg-ink px-3"
-            value={plan.id}
-            disabled={!canChoosePlan}
-            onChange={(event) => selectProgram(event.target.value)}
-          >
-            {walkingWorkouts.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-          <span className="text-mist">{plan.summary}</span>
-        </label>
+        {walking ? null : (
+          <label className="flex flex-col gap-2 text-sm">
+            <span className="text-mist">Workout</span>
+            <select
+              className="min-h-12 rounded-md border border-line bg-ink px-3"
+              value={plan.id}
+              disabled={!canChoosePlan}
+              onChange={(event) => selectProgram(event.target.value)}
+            >
+              {walkingWorkouts.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+            <span className="text-mist">{plan.summary}</span>
+          </label>
+        )}
 
-        {youtube ? (
+        {youtube && !walking ? (
           <Button
             onClick={() => {
-              if (castState === 'connected') {
-                void stopCasting();
-                return;
-              }
-              setYoutubeCastNote(YOUTUBE_CAST_MESSAGE);
+              const videoId = media.type === 'youtube' ? media.videoId : '';
+              const opened = videoId ? window.open(youTubeWatchUrl(videoId), '_blank', 'noopener') : null;
+              setYoutubeCastNote(opened ? YOUTUBE_CAST_MESSAGE : 'Allow the YouTube tab, then tap Cast there. Chromecast cannot play the embedded player directly.');
             }}
           >
             Cast
           </Button>
         ) : null}
-        {youtubeCastNote ? <p className="text-sm leading-6 text-mist">{youtubeCastNote}</p> : null}
+        {youtubeCastNote && !walking ? <p className="text-sm leading-6 text-mist">{youtubeCastNote}</p> : null}
 
-        <ElevationProfile
-          profile={route.elevationProfile}
-          progressMeters={workout.distanceMeters}
-          inclinePercent={workout.liveInclinePercent}
-        />
+        {walking ? null : (
+          <ElevationProfile
+            profile={route.elevationProfile}
+            progressMeters={workout.distanceMeters}
+            inclinePercent={workout.liveInclinePercent}
+          />
+        )}
 
         {workout.autoInclineNote ? <p className="text-sm text-mist">{workout.autoInclineNote}</p> : null}
         {actionError ? <p className="text-sm text-ember">{actionError}</p> : null}
@@ -317,7 +339,7 @@ export function WorkoutPage() {
           </div>
         ) : null}
 
-        {source === 'simulator' ? (
+        {source === 'simulator' && !walking ? (
           <Button variant="ghost" onClick={() => setPanelOpen(true)}>
             Simulator controls
           </Button>
@@ -373,6 +395,11 @@ export function WorkoutPage() {
       ) : null}
     </div>
   );
+}
+
+function stepSpeed(current: number, delta: number): number {
+  const next = Math.round((current + delta) * 10) / 10;
+  return Math.min(SIMULATOR_MAX_SPEED_KMH, Math.max(0, next));
 }
 
 function Metric({ label, value, unit, detail }: { label: string; value: string; unit?: string; detail?: string | null }) {

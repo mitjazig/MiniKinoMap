@@ -60,6 +60,9 @@ declare global {
 let loading: Promise<boolean> | null = null;
 let configured = false;
 
+/** Same id the Cast SDK publishes as DEFAULT_MEDIA_RECEIVER_APP_ID. Chromecast 2 plays this receiver. */
+const DEFAULT_MEDIA_RECEIVER_APP_ID = 'CC1AD845';
+
 export function castFramework(): CastFramework | null {
   if (typeof window === 'undefined') return null;
   return window.cast?.framework ?? null;
@@ -84,6 +87,7 @@ export function loadCastFramework(): Promise<boolean> {
     const finish = (ok: boolean) => {
       if (settled) return;
       settled = true;
+      if (!ok) loading = null;
       if (ok) configureCast();
       resolve(ok);
     };
@@ -95,7 +99,20 @@ export function loadCastFramework(): Promise<boolean> {
       } catch {
         // Ignore a previous hook.
       }
-      finish(Boolean(available && window.cast?.framework));
+      if (!available) {
+        finish(false);
+        return;
+      }
+      const started = Date.now();
+      const waitForMedia = () => {
+        if (window.chrome?.cast?.media || window.cast?.framework) {
+          finish(true);
+          return;
+        }
+        if (Date.now() - started > 4000) finish(false);
+        else window.setTimeout(waitForMedia, 50);
+      };
+      waitForMedia();
     };
 
     if (!document.querySelector('script[data-cast-sender]')) {
@@ -110,7 +127,7 @@ export function loadCastFramework(): Promise<boolean> {
       document.head.appendChild(script);
     }
 
-    window.setTimeout(() => finish(Boolean(window.cast?.framework && window.chrome?.cast?.media)), 8000);
+    window.setTimeout(() => finish(Boolean(window.cast?.framework)), 12000);
   });
 
   return loading;
@@ -120,8 +137,8 @@ function configureCast() {
   if (configured) return;
   const framework = castFramework();
   const media = chromeCast()?.media;
-  const appId = media?.DEFAULT_MEDIA_RECEIVER_APP_ID;
-  if (!framework || !appId) return;
+  const appId = media?.DEFAULT_MEDIA_RECEIVER_APP_ID || DEFAULT_MEDIA_RECEIVER_APP_ID;
+  if (!framework) return;
   try {
     framework.CastContext.getInstance().setOptions({
       receiverApplicationId: appId,

@@ -1,12 +1,17 @@
 import { dataViewToHex } from '../../utils/hex';
 import { ControlUnsupportedError, type TreadmillTransport } from '../TreadmillTransport';
-import type { ConnectionState, LogEntry, PacketTrace, TreadmillData } from '../types';
+import type { ConnectionState, LogEntry, PacketTrace, TreadmillData, TreadmillMachineEvent } from '../types';
 import { FTMS_MISSING_MESSAGE, inspectGattServer, type GattReport } from './BleInspector';
 import { ftmsProtocolAdapter } from './FtmsProtocolAdapter';
 import {
   describeFitnessMachineStatus,
+  isActiveTrainingStatus,
+  machineEventFromStatus,
   parseControlPointResponse,
   parseFtmsFeatures,
+  parseSupportedSpeedRange,
+  walkingTargetKmh,
+  type SupportedSpeedRange,
 } from './ftmsControl';
 import { FTMS_UUID, OPTIONAL_SERVICE_UUIDS, sameUuid, uuid16 } from './ftmsConstants';
 import { ftmsFieldsToRecord, parseFtmsTreadmillData } from './FtmsTreadmillParser';
@@ -28,6 +33,8 @@ export class WebBluetoothTransport implements TreadmillTransport {
   private treadmillChar: BluetoothCharacteristicLike | null = null;
   private controlPoint: BluetoothCharacteristicLike | null = null;
   private statusChar: BluetoothCharacteristicLike | null = null;
+  private trainingChar: BluetoothCharacteristicLike | null = null;
+  private speedRange: SupportedSpeedRange | null = null;
   private state: ConnectionState = 'disconnected';
   private statusDetail: string | null = null;
   private ftmsDetected = false;
@@ -47,6 +54,7 @@ export class WebBluetoothTransport implements TreadmillTransport {
   } | null = null;
 
   private readonly dataListeners = new Set<(data: TreadmillData) => void>();
+  private readonly machineListeners = new Set<(event: TreadmillMachineEvent) => void>();
   private readonly connectionListeners = new Set<(state: ConnectionState) => void>();
   private readonly logListeners = new Set<(entry: LogEntry) => void>();
   private readonly packetListeners = new Set<(packet: PacketTrace) => void>();
@@ -82,6 +90,11 @@ export class WebBluetoothTransport implements TreadmillTransport {
   subscribe(callback: (data: TreadmillData) => void): () => void {
     this.dataListeners.add(callback);
     return () => this.dataListeners.delete(callback);
+  }
+
+  subscribeMachine(callback: (event: TreadmillMachineEvent) => void): () => void {
+    this.machineListeners.add(callback);
+    return () => this.machineListeners.delete(callback);
   }
 
   subscribeConnection(callback: (state: ConnectionState) => void): () => void {
@@ -172,7 +185,16 @@ export class WebBluetoothTransport implements TreadmillTransport {
       this.log('Control unsupported. Listening only — start the belt on the treadmill.');
       return;
     }
-    await this.sendCommand('start', (adapter) => adapter.encodeStart());
+    await this.ensureControl();
+    const started = await this.dispatch('start', (adapter) => adapter.encodeStart());
+    const speed = walkingTargetKmh(this.speedRange);
+    const moving = (this.last?.speedKmh ?? 0) >= speed;
+    const speedSent = moving ? true : await this.dispatch('set speed', (adapter) => adapter.encodeSetSpeed(speed));
+    if (!started && !speedSent) {
+      throw new ControlUnsupportedError('The treadmill did not confirm Start. Press Start in the app again.');
+    }
+    if (!started) this.log('Start was not confirmed. A walking speed was sent anyway.', 'warn');
+    if (!moving) this.log(`Walking speed ${speed.toFixed(1)} km/h sent. This Kettler does not move at 0 km/h.`);
   }
 
   async stop(): Promise<void> {
@@ -298,6 +320,31 @@ export class WebBluetoothTransport implements TreadmillTransport {
       this.log('Control unsupported');
     }
 
+    const speedRange = characteristics.find((item) => sameUuid(item.uuid, FTMS_UUID.supportedSpeedRange));
+    if (speedRange?.properties.read && speedRange.readValue) {
+      try {
+        const decoded = parseSupportedSpeedRange(await speedRange.readValue());
+        if (decoded) {
+          this.speedRange = decoded;
+          this.log(`Speed range ${decoded.minKmh}–${decoded.maxKmh} km/h, step ${decoded.incrementKmh}`);
+        }
+      } catch (error) {
+        this.log(`Could not read the speed range: ${messageOf(error)}`, 'warn');
+      }
+    }
+
+    const training = characteristics.find((item) => sameUuid(item.uuid, 0x2ad3));
+    if (training && (training.properties.notify || training.properties.indicate)) {
+      try {
+        this.trainingChar = training;
+        await training.startNotifications();
+        training.addEventListener('characteristicvaluechanged', this.onTrainingNotification);
+        this.log('Training Status notifications started');
+      } catch (error) {
+        this.log(`Training Status notifications failed: ${messageOf(error)}`, 'warn');
+      }
+    }
+
     if (status && (status.properties.notify || status.properties.indicate)) {
       try {
         this.statusChar = status;
@@ -308,39 +355,43 @@ export class WebBluetoothTransport implements TreadmillTransport {
         this.log(`Status characteristic found, notifications failed: ${messageOf(error)}`, 'warn');
       }
     }
+
+    if (this.controlSupported) {
+      try {
+        await this.ensureControl();
+        this.statusDetail = 'Connected. Press Start in the app. This treadmill waits for a speed before the belt moves.';
+      } catch (error) {
+        this.log(`Request Control failed: ${messageOf(error)}`, 'warn');
+      }
+    }
   }
 
-  private async sendCommand(
-    label: string,
-    encode: (adapter: ProtocolAdapter) => Uint8Array | null,
-  ): Promise<void> {
-    if (!this.adapter || !this.controlPoint || !this.controlSupported) {
-      throw new ControlUnsupportedError();
-    }
-    if (!this.controlGranted) {
-      const request = this.adapter.encodeRequestControl();
-      if (!request) throw new ControlUnsupportedError();
-      this.log('Requesting FTMS control');
-      const accepted = await this.writeAndWait(FTMS_OPCODE_REQUEST, request);
-      if (!accepted) {
-        this.log('Control unsupported', 'warn');
-        this.controlSupported = false;
-        this.speedControlSupported = false;
-        this.inclineControlSupported = false;
-        throw new ControlUnsupportedError();
-      }
-      this.controlGranted = true;
-      this.log('Control granted');
-    }
+  private async ensureControl(): Promise<void> {
+    if (this.controlGranted) return;
+    if (!this.adapter || !this.controlPoint) throw new ControlUnsupportedError();
+    const request = this.adapter.encodeRequestControl();
+    if (!request) throw new ControlUnsupportedError();
+    this.log('Requesting FTMS control');
+    const accepted = await this.writeAndWait(FTMS_OPCODE_REQUEST, request);
+    this.controlGranted = true;
+    if (accepted) this.log('Control granted');
+    else this.log('Request Control was not confirmed. Commands will still be sent.', 'warn');
+  }
+
+  private async dispatch(label: string, encode: (adapter: ProtocolAdapter) => Uint8Array | null): Promise<boolean> {
+    if (!this.adapter || !this.controlPoint || !this.controlSupported) throw new ControlUnsupportedError();
     const payload = encode(this.adapter);
     if (!payload || payload.length === 0) throw new ControlUnsupportedError();
-    const opcode = payload[0] ?? 0;
-    const accepted = await this.writeAndWait(opcode, payload);
-    if (!accepted) {
-      this.log(`Control unsupported (${label})`, 'warn');
-      throw new ControlUnsupportedError();
-    }
-    this.log(`Sent FTMS ${label}`);
+    const accepted = await this.writeAndWait(payload[0] ?? 0, payload);
+    if (accepted) this.log(`Sent FTMS ${label}`);
+    else this.log(`FTMS ${label} was not confirmed`, 'warn');
+    return accepted;
+  }
+
+  private async sendCommand(label: string, encode: (adapter: ProtocolAdapter) => Uint8Array | null): Promise<void> {
+    await this.ensureControl();
+    const accepted = await this.dispatch(label, encode);
+    if (!accepted) throw new ControlUnsupportedError(`The treadmill did not confirm ${label}.`);
   }
 
   private async writeAndWait(opcode: number, payload: Uint8Array): Promise<boolean> {
@@ -352,7 +403,7 @@ export class WebBluetoothTransport implements TreadmillTransport {
         if (this.pendingControl?.opcode === opcode) this.pendingControl = null;
         this.log('Control point did not confirm the command', 'warn');
         resolve(false);
-      }, 1500);
+      }, 2500);
       this.pendingControl = {
         opcode,
         resolve: (ok) => {
@@ -363,13 +414,7 @@ export class WebBluetoothTransport implements TreadmillTransport {
     });
     const bytes = new Uint8Array(payload);
     try {
-      if (characteristic.properties.write && characteristic.writeValueWithResponse) {
-        await characteristic.writeValueWithResponse(bytes);
-      } else if (characteristic.writeValueWithoutResponse) {
-        await characteristic.writeValueWithoutResponse(bytes);
-      } else {
-        throw new ControlUnsupportedError();
-      }
+      await this.writeControl(characteristic, bytes);
     } catch (error) {
       if (timer) clearTimeout(timer);
       this.pendingControl = null;
@@ -378,6 +423,28 @@ export class WebBluetoothTransport implements TreadmillTransport {
       throw new ControlUnsupportedError();
     }
     return response;
+  }
+
+  /**
+   * Kettler accepts the control point as a write command and answers with an indication.
+   * A write-with-response often never produces that indication, so the command is tried without response first.
+   */
+  private async writeControl(characteristic: BluetoothCharacteristicLike, bytes: Uint8Array): Promise<void> {
+    const payload = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(payload).set(bytes);
+    if (characteristic.properties.writeWithoutResponse && characteristic.writeValueWithoutResponse) {
+      try {
+        await characteristic.writeValueWithoutResponse(payload);
+        return;
+      } catch (error) {
+        this.log(`Write without response failed: ${messageOf(error)}`, 'warn');
+      }
+    }
+    if (characteristic.properties.write && characteristic.writeValueWithResponse) {
+      await characteristic.writeValueWithResponse(payload);
+      return;
+    }
+    throw new ControlUnsupportedError();
   }
 
   private readonly onTreadmillNotification = () => {
@@ -450,6 +517,8 @@ export class WebBluetoothTransport implements TreadmillTransport {
     const hex = dataViewToHex(value);
     const description = describeFitnessMachineStatus(value);
     this.log(`Status: ${description}`);
+    const machine = machineEventFromStatus(value);
+    if (machine) this.emitMachine(machine);
     this.emitPacket({
       id: this.packetId,
       timestamp: Date.now(),
@@ -460,12 +529,32 @@ export class WebBluetoothTransport implements TreadmillTransport {
     this.packetId += 1;
   };
 
+  private readonly onTrainingNotification = () => {
+    const value = this.trainingChar?.value;
+    if (!value) return;
+    const hex = dataViewToHex(value);
+    this.log(`Training status ${hex}${isActiveTrainingStatus(value) ? ' (active)' : ''}`);
+    this.emitPacket({
+      id: this.packetId,
+      timestamp: Date.now(),
+      characteristicUuid: uuid16(0x2ad3),
+      hex,
+      parsed: { trainingStatus: value.byteLength > 1 ? value.getUint8(1) : '' },
+    });
+    this.packetId += 1;
+  };
+
+  private emitMachine(event: TreadmillMachineEvent) {
+    for (const listener of this.machineListeners) listener(event);
+  }
+
   private readonly onUnexpectedDisconnect = () => {
     if (this.userDisconnect) return;
     this.controlGranted = false;
     this.treadmillChar = null;
     this.controlPoint = null;
     this.statusChar = null;
+    this.trainingChar = null;
     this.server = null;
     this.log('GATT server disconnected', 'warn');
     this.statusDetail = 'Treadmill connection lost';
@@ -483,6 +572,7 @@ export class WebBluetoothTransport implements TreadmillTransport {
     this.controlPoint = null;
     this.treadmillChar = null;
     this.statusChar = null;
+    this.trainingChar = null;
     this.server = null;
   }
 
@@ -497,6 +587,9 @@ export class WebBluetoothTransport implements TreadmillTransport {
     }
     if (this.statusChar) {
       this.statusChar.removeEventListener('characteristicvaluechanged', this.onStatusNotification);
+    }
+    if (this.trainingChar) {
+      this.trainingChar.removeEventListener('characteristicvaluechanged', this.onTrainingNotification);
     }
     if (this.controlPoint) {
       this.controlPoint.removeEventListener('characteristicvaluechanged', this.onControlNotification);

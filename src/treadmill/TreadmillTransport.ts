@@ -1,4 +1,4 @@
-import type { ConnectionState, LogEntry, PacketTrace, TreadmillData } from './types';
+import type { ConnectionState, LogEntry, PacketTrace, TreadmillData, TreadmillMachineEvent } from './types';
 
 /**
  * The only treadmill API the workout engine and the product UI depend on.
@@ -17,6 +17,8 @@ export interface TreadmillTransport {
   setTargetIncline?(percent: number): Promise<void>;
 
   subscribe(callback: (data: TreadmillData) => void): () => void;
+  /** Console Start/Pause/Stop. Absent on transports that have no separate console. */
+  subscribeMachine?(callback: (event: TreadmillMachineEvent) => void): () => void;
   subscribeConnection(callback: (state: ConnectionState) => void): () => void;
   subscribeLog(callback: (entry: LogEntry) => void): () => void;
   subscribePacket(callback: (packet: PacketTrace) => void): () => void;

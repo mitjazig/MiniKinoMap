@@ -40,6 +40,7 @@ export class WorkoutEngine {
   private transport: TreadmillTransport | null = null;
   private unsubData: (() => void) | null = null;
   private unsubConn: (() => void) | null = null;
+  private unsubMachine: (() => void) | null = null;
   private activeSeconds = 0;
   private distanceMeters = 0;
   private maxSpeedKmh = 0;
@@ -76,9 +77,11 @@ export class WorkoutEngine {
   use(transport: TreadmillTransport) {
     this.unsubData?.();
     this.unsubConn?.();
+    this.unsubMachine?.();
     this.transport = transport;
     this.unsubData = transport.subscribe((data) => this.ingest(data));
     this.unsubConn = transport.subscribeConnection((state) => this.onConnection(state));
+    this.unsubMachine = transport.subscribeMachine?.((event) => this.onMachine(event)) ?? null;
     this.onConnection(transport.getConnectionState());
   }
 
@@ -150,11 +153,10 @@ export class WorkoutEngine {
     try {
       await this.transport?.start();
     } catch (error) {
-      if (this.transport?.getConnectionState() !== 'connected') {
-        this.phase = 'ready';
-        this.emit();
-        return { ok: false, error: error instanceof Error ? error.message : 'Could not start the belt.' };
-      }
+      this.phase = 'ready';
+      this.lastTs = null;
+      this.emit();
+      return { ok: false, error: error instanceof Error ? error.message : 'Could not start the belt.' };
     }
     this.applyProgramSegment(true);
     this.emit();
@@ -267,7 +269,36 @@ export class WorkoutEngine {
     this.emit();
   }
 
+  private onMachine(event: 'started' | 'paused' | 'stopped') {
+    if (event === 'started') this.beginFromBelt();
+    if (event === 'paused' && this.phase === 'running') {
+      this.phase = 'paused';
+      this.lastTs = null;
+      this.banner = 'Paused on the treadmill';
+      this.emit();
+    }
+    if (event === 'stopped' && (this.phase === 'running' || this.phase === 'paused')) {
+      this.phase = 'paused';
+      this.lastTs = null;
+      this.banner = 'Stopped on the treadmill';
+      this.emit();
+    }
+  }
+
+  /** The belt is moving or the console reported Start. Do not send another Start opcode. */
+  private beginFromBelt() {
+    if (this.phase !== 'ready') return;
+    const next = transition(this.phase, { type: 'START' });
+    if (next.error) return;
+    this.phase = next.phase;
+    this.banner = null;
+    this.lastTs = null;
+    this.applyProgramSegment(true);
+    this.emit();
+  }
+
   private ingest(data: TreadmillData) {
+    if (this.phase === 'ready' && data.speedKmh >= 1) this.beginFromBelt();
     this.liveSpeedKmh = data.speedKmh;
     this.liveInclinePercent = data.inclinePercent ?? this.liveInclinePercent;
     this.treadmillBpm = data.heartRateBpm != null && data.heartRateBpm > 0 ? data.heartRateBpm : null;

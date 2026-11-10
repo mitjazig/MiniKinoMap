@@ -16,4 +16,4 @@ export function youtubeErrorMessage(code: number): string {
 }
 
 export const YOUTUBE_CAST_MESSAGE =
-  'YouTube casting is currently handled separately from native route casting.';
+  'Chromecast plays this from YouTube, not as a video file. Use Cast in the YouTube tab that just opened. The walk stays here.';

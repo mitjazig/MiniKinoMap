@@ -124,6 +124,38 @@ const STATUS_NAMES: Record<number, string> = {
   0x0e: 'Targeted training time changed',
 };
 
+/**
+ * A walking speed the belt will accept. Kettler 07886-900 rejects 0 km/h;
+ * its reported minimum is 1 km/h.
+ */
+export function walkingTargetKmh(range: SupportedSpeedRange | null, preferred = 4): number {
+  const min = range && range.minKmh > 0 ? range.minKmh : 1;
+  const max = range && range.maxKmh > min ? range.maxKmh : 18;
+  return clamp(preferred, min, max);
+}
+
+/** Fitness Machine Status opcodes that mean the console changed the workout. */
+export function machineEventFromStatus(view: DataView): 'started' | 'paused' | 'stopped' | null {
+  if (view.byteLength < 1) return null;
+  const opcode = view.getUint8(0);
+  if (opcode === 0x04) return 'started';
+  if (opcode === 0x02) {
+    const control = view.byteLength > 1 ? view.getUint8(1) : 0x01;
+    return control === 0x02 ? 'paused' : 'stopped';
+  }
+  return null;
+}
+
+/**
+ * Training Status is flags plus a status byte.
+ * 0x0D is manual mode. Interval values mean the belt session is already active.
+ */
+export function isActiveTrainingStatus(view: DataView): boolean {
+  if (view.byteLength < 2) return false;
+  const status = view.getUint8(1);
+  return status === 0x0d || (status >= 0x02 && status <= 0x0c);
+}
+
 /** Best-effort status name. Unknown opcodes stay visible as hex. */
 export function describeFitnessMachineStatus(view: DataView): string {
   if (view.byteLength < 1) return 'Empty status';

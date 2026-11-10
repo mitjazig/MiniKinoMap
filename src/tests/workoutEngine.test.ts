@@ -130,6 +130,29 @@ describe('WorkoutEngine', () => {
     expect(resumed.distanceMeters).toBeCloseTo((10 / 3.6) * 20, 1);
   });
 
+  it('starts the workout when the belt is already moving', async () => {
+    const belt = new FakeTransport();
+    const workout = engine();
+    workout.use(belt);
+    await belt.connect();
+    workout.selectRoute('lakeside');
+    expect(workout.getSnapshot().phase).toBe('ready');
+    belt.push({ timestamp: 0, speedKmh: 4, distanceMeters: 0, elapsedSeconds: 0 });
+    expect(workout.getSnapshot().phase).toBe('running');
+  });
+
+  it('stays ready when the treadmill rejects Start', async () => {
+    const belt = new FakeTransport();
+    belt.start = () => Promise.reject(new Error('The treadmill did not confirm Start.'));
+    const workout = engine();
+    workout.use(belt);
+    await belt.connect();
+    workout.selectRoute('lakeside');
+    const result = await workout.start();
+    expect(result.ok).toBe(false);
+    expect(workout.getSnapshot().phase).toBe('ready');
+  });
+
   it('keeps progress when the connection drops and stays paused after reconnect', async () => {
     const belt = new FakeTransport();
     const workout = engine();

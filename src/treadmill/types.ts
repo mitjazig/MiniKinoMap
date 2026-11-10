@@ -18,6 +18,8 @@ export type TreadmillData = {
   cadenceSpm?: number;
 };
 
+export type TreadmillMachineEvent = 'started' | 'paused' | 'stopped';
+
 export type LogEntry = {
   id: number;
   timestamp: number;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { bytesToHex, hexToBytes } from '../utils/hex';
-import { encodeSetTargetIncline, encodeSetTargetSpeed } from '../treadmill/bluetooth/ftmsControl';
+import { encodeSetTargetIncline, encodeSetTargetSpeed, machineEventFromStatus, walkingTargetKmh } from '../treadmill/bluetooth/ftmsControl';
 import { FTMS_FLAG } from '../treadmill/bluetooth/ftmsConstants';
 import { buildFtmsTreadmillPacket } from '../treadmill/bluetooth/ftmsPacketBuilder';
 import { FtmsParseError, parseFtmsTreadmillData } from '../treadmill/bluetooth/FtmsTreadmillParser';
@@ -58,5 +58,17 @@ describe('FTMS treadmill parser', () => {
     expect(bytesToHex(encodeSetTargetSpeed(8.4))).toBe('02 48 03');
     expect(bytesToHex(encodeSetTargetIncline(-1))).toBe('03 f6 ff');
     expect(Array.from(hexToBytes('02 48 03'))).toEqual([0x02, 0x48, 0x03]);
+  });
+
+  it('keeps a Kettler walking speed inside the reported range', () => {
+    expect(walkingTargetKmh({ minKmh: 1, maxKmh: 18, incrementKmh: 0.1 })).toBe(4);
+    expect(walkingTargetKmh({ minKmh: 5, maxKmh: 18, incrementKmh: 0.1 }, 4)).toBe(5);
+  });
+
+  it('reads a console start from Fitness Machine Status', () => {
+    const started = new DataView(new Uint8Array([0x04]).buffer);
+    const paused = new DataView(new Uint8Array([0x02, 0x02]).buffer);
+    expect(machineEventFromStatus(started)).toBe('started');
+    expect(machineEventFromStatus(paused)).toBe('paused');
   });
 });
