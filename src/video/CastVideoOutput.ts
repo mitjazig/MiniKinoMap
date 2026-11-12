@@ -1,6 +1,6 @@
 import { logger } from '../logging/logger';
 import { CAST_UNAVAILABLE_MESSAGE, CAST_URL_MESSAGE, isCastAccessibleUrl } from './castAccess';
-import { castFramework, chromeCast, loadCastFramework, type CastContext, type CastSession, type RemoteMedia } from './loadCastFramework';
+import { castFramework, chromeCast, configureCast, loadCastFramework, type CastContext, type CastSession, type RemoteMedia } from './loadCastFramework';
 import type { RouteMedia, VideoOutput, VideoOutputState } from './types';
 
 export type CastSessionState = 'idle' | 'connecting' | 'connected' | 'disconnected';
@@ -35,9 +35,11 @@ export class CastVideoOutput implements VideoOutput {
   private endedListeners = new Set<(reason: string | null) => void>();
 
   async requestSession(): Promise<void> {
+    logger.info('cast', 'Cast requested');
     const ready = await loadCastFramework();
     const framework = castFramework();
-    if (!ready || !framework) {
+    if (!ready || !framework || !configureCast()) {
+      logger.warn('cast', `Cast SDK not ready (loaded ${ready}, framework ${Boolean(framework)})`);
       this.message = CAST_UNAVAILABLE_MESSAGE;
       this.outputState = 'error';
       this.emit();
@@ -45,15 +47,17 @@ export class CastVideoOutput implements VideoOutput {
     }
     const context = framework.CastContext.getInstance();
     this.bind(context);
+    logger.info('cast', `Cast state before chooser: ${context.getCastState?.() ?? 'unknown'}`);
     this.sessionState = 'connecting';
-    this.message = null;
+    this.message = 'Looking for Chromecast…';
     this.emit();
     try {
-      await context.requestSession();
+      await withTimeout(context.requestSession(), CHOOSER_TIMEOUT_MS);
     } catch (error) {
       this.sessionState = 'disconnected';
       this.outputState = 'idle';
-      const message = isChooserCancel(error) ? 'Cast device chooser was closed.' : error instanceof Error ? error.message : 'Cast session failed.';
+      const message = castErrorMessage(error);
+      logger.warn('cast', `Cast request failed: ${describeCastError(error)}`);
       this.message = message;
       this.emit();
       throw new Error(message);
@@ -272,6 +276,42 @@ export class CastVideoOutput implements VideoOutput {
   }
 }
 
-function isChooserCancel(error: unknown): boolean {
-  return error instanceof DOMException && (error.name === 'NotFoundError' || error.name === 'AbortError' || error.name === 'InvalidStateError');
+const CHOOSER_TIMEOUT_MS = 60_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject('timeout'), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+/** CAF rejects with chrome.cast.ErrorCode strings, not Error objects. */
+export function castErrorMessage(error: unknown): string {
+  const code = describeCastError(error);
+  if (code === 'cancel' || code === 'NotFoundError' || code === 'AbortError') return 'Cast device chooser was closed.';
+  if (code === 'receiver_unavailable') {
+    return 'No Chromecast found. Put the phone on the same Wi-Fi as the Chromecast and allow Chrome to find nearby devices.';
+  }
+  if (code === 'timeout') return 'The Chromecast did not answer. Restart it and try again.';
+  if (code === 'session_error') return 'The Chromecast could not open the player. Restart it and try again.';
+  if (code === 'NotAllowedError' || code === 'InvalidStateError') return 'Tap Cast again. Chrome only opens the device list right after a tap.';
+  if (code === 'api_not_initialized' || code === 'extension_missing') return CAST_UNAVAILABLE_MESSAGE;
+  return `Cast failed: ${code}`;
+}
+
+function describeCastError(error: unknown): string {
+  if (typeof error === 'string') return error;
+  if (error instanceof DOMException) return error.name;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && 'code' in error) return String((error as { code: unknown }).code);
+  return 'unknown';
 }

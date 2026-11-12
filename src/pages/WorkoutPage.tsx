@@ -141,8 +141,12 @@ export function WorkoutPage() {
                 TV: {castDeviceName || 'Chromecast'}
               </Button>
             ) : (
-              <Button className="min-h-11 bg-ink/80 text-paper" onClick={() => void castToTv()}>
-                Cast
+              <Button
+                className="min-h-11 bg-ink/80 text-paper"
+                disabled={castState === 'connecting'}
+                onClick={() => void castToTv()}
+              >
+                {castState === 'connecting' ? 'Cast…' : 'Cast'}
               </Button>
             )}
           </div>

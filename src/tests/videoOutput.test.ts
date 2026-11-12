@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { syncThroughOutput } from '../routes/RouteProgressEngine';
 import type { VideoOutput, VideoOutputState } from '../video/types';
+import { castErrorMessage } from '../video/CastVideoOutput';
 
 class FakeOutput implements VideoOutput {
   calls: string[] = [];
@@ -86,5 +87,14 @@ describe('VideoOutput sync', () => {
     });
     expect(command.type).toBe('seek');
     expect(output.calls.some((call) => call.startsWith('seek:108'))).toBe(true);
+  });
+});
+
+describe('castErrorMessage', () => {
+  it('turns Cast SDK error codes into readable text', () => {
+    expect(castErrorMessage('cancel')).toBe('Cast device chooser was closed.');
+    expect(castErrorMessage('receiver_unavailable')).toMatch(/No Chromecast found/);
+    expect(castErrorMessage(new DOMException('x', 'NotAllowedError'))).toMatch(/Tap Cast again/);
+    expect(castErrorMessage({ code: 'weird' })).toBe('Cast failed: weird');
   });
 });

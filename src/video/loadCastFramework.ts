@@ -23,8 +23,9 @@ export type CastSession = {
 
 export type CastContext = {
   setOptions: (options: Record<string, unknown>) => void;
-  requestSession: () => Promise<void>;
+  requestSession: () => Promise<unknown>;
   getCurrentSession: () => CastSession | null;
+  getCastState?: () => string;
   addEventListener: (type: string, listener: (event: CastUpdateEvent) => void) => void;
   endCurrentSession?: (stopCasting: boolean) => void;
 };
@@ -105,7 +106,7 @@ export function loadCastFramework(): Promise<boolean> {
       }
       const started = Date.now();
       const waitForMedia = () => {
-        if (window.chrome?.cast?.media || window.cast?.framework) {
+        if (window.cast?.framework) {
           finish(true);
           return;
         }
@@ -133,20 +134,22 @@ export function loadCastFramework(): Promise<boolean> {
   return loading;
 }
 
-function configureCast() {
-  if (configured) return;
+/** Sets the receiver once. The device chooser does nothing until this has run. */
+export function configureCast(): boolean {
+  if (configured) return true;
   const framework = castFramework();
   const media = chromeCast()?.media;
   const appId = media?.DEFAULT_MEDIA_RECEIVER_APP_ID || DEFAULT_MEDIA_RECEIVER_APP_ID;
-  if (!framework) return;
+  if (!framework) return false;
   try {
     framework.CastContext.getInstance().setOptions({
       receiverApplicationId: appId,
       autoJoinPolicy: chromeCast()?.AutoJoinPolicy?.ORIGIN_SCOPED ?? 'origin_scoped',
     });
     configured = true;
-    logger.info('cast', 'Cast framework ready');
+    logger.info('cast', `Cast framework ready (receiver ${appId})`);
   } catch (error) {
     logger.warn('cast', error instanceof Error ? error.message : 'Cast options were rejected');
   }
+  return configured;
 }
