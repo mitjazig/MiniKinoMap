@@ -349,13 +349,24 @@ export class WorkoutEngine {
     this.commandedIncline = next;
     this.lastSentIncline = next;
     this.lastInclineSentAt = timestamp;
-    void transport.setTargetIncline(next).catch((error: unknown) => {
-      if (error instanceof ControlUnsupportedError) {
-        this.autoInclineBlocked = true;
-        this.autoInclineNote = 'Control unsupported';
+    void transport.setTargetIncline(next).then(
+      () => {
+        if (this.autoInclineNote) {
+          this.autoInclineNote = null;
+          this.emit();
+        }
+      },
+      (error: unknown) => {
+        if (error instanceof ControlUnsupportedError) {
+          this.autoInclineBlocked = true;
+          this.autoInclineNote = 'Control unsupported';
+        } else {
+          this.lastSentIncline = Number.NaN;
+          this.autoInclineNote = `Incline not accepted: ${error instanceof Error ? error.message : String(error)}`;
+        }
         this.emit();
-      }
-    });
+      },
+    );
   }
 
   private async pauseBelt() {
@@ -447,16 +458,15 @@ export class WorkoutEngine {
       this.autoInclineNote = 'Control unsupported';
       return;
     }
-    void transport.setTargetSpeed?.(place.segment.speedKmh).catch(() => {
-      this.autoInclineNote = 'Control unsupported';
+    const report = (what: string) => (error: unknown) => {
+      this.autoInclineNote =
+        error instanceof ControlUnsupportedError
+          ? 'Control unsupported'
+          : `${what} not accepted: ${error instanceof Error ? error.message : String(error)}`;
       this.emit();
-    });
-    void transport.setTargetIncline?.(place.segment.inclinePercent).catch((error: unknown) => {
-      if (error instanceof ControlUnsupportedError) {
-        this.autoInclineNote = 'Control unsupported';
-        this.emit();
-      }
-    });
+    };
+    void transport.setTargetSpeed?.(place.segment.speedKmh).catch(report('Speed'));
+    void transport.setTargetIncline?.(place.segment.inclinePercent).catch(report('Incline'));
   }
 
   private emit() {

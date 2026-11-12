@@ -1,5 +1,5 @@
 import { dataViewToHex } from '../../utils/hex';
-import { ControlUnsupportedError, type TreadmillTransport } from '../TreadmillTransport';
+import { ControlRejectedError, ControlUnsupportedError, type TreadmillTransport } from '../TreadmillTransport';
 import type { ConnectionState, LogEntry, PacketTrace, TreadmillData, TreadmillMachineEvent } from '../types';
 import { FTMS_MISSING_MESSAGE, inspectGattServer, type GattReport } from './BleInspector';
 import { ftmsProtocolAdapter } from './FtmsProtocolAdapter';
@@ -9,10 +9,15 @@ import {
   machineEventFromStatus,
   parseControlPointResponse,
   parseFtmsFeatures,
+  parseSupportedInclineRange,
   parseSupportedSpeedRange,
+  snapToRange,
   walkingTargetKmh,
+  type SupportedInclineRange,
   type SupportedSpeedRange,
 } from './ftmsControl';
+
+type ControlOutcome = 'confirmed' | 'rejected' | 'timeout';
 import { FTMS_UUID, OPTIONAL_SERVICE_UUIDS, sameUuid, uuid16 } from './ftmsConstants';
 import { ftmsFieldsToRecord, parseFtmsTreadmillData } from './FtmsTreadmillParser';
 import { selectProtocolAdapter, type ProtocolAdapter } from './protocolAdapter';
@@ -35,6 +40,8 @@ export class WebBluetoothTransport implements TreadmillTransport {
   private statusChar: BluetoothCharacteristicLike | null = null;
   private trainingChar: BluetoothCharacteristicLike | null = null;
   private speedRange: SupportedSpeedRange | null = null;
+  private inclineRange: SupportedInclineRange | null = null;
+  private commandChain: Promise<unknown> = Promise.resolve();
   private state: ConnectionState = 'disconnected';
   private statusDetail: string | null = null;
   private ftmsDetected = false;
@@ -50,7 +57,7 @@ export class WebBluetoothTransport implements TreadmillTransport {
   private packetId = 1;
   private pendingControl: {
     opcode: number;
-    resolve: (ok: boolean) => void;
+    resolve: (outcome: ControlOutcome) => void;
   } | null = null;
 
   private readonly dataListeners = new Set<(data: TreadmillData) => void>();
@@ -185,16 +192,17 @@ export class WebBluetoothTransport implements TreadmillTransport {
       this.log('Control unsupported. Listening only — start the belt on the treadmill.');
       return;
     }
-    await this.ensureControl();
-    const started = await this.dispatch('start', (adapter) => adapter.encodeStart());
-    const speed = walkingTargetKmh(this.speedRange);
-    const moving = (this.last?.speedKmh ?? 0) >= speed;
-    const speedSent = moving ? true : await this.dispatch('set speed', (adapter) => adapter.encodeSetSpeed(speed));
-    if (!started && !speedSent) {
-      throw new ControlUnsupportedError('The treadmill did not confirm Start. Press Start in the app again.');
-    }
-    if (!started) this.log('Start was not confirmed. A walking speed was sent anyway.', 'warn');
-    if (!moving) this.log(`Walking speed ${speed.toFixed(1)} km/h sent. This Kettler does not move at 0 km/h.`);
+    await this.enqueue(async () => {
+      await this.ensureControl();
+      const started = await this.dispatch('start', (adapter) => adapter.encodeStart());
+      const speed = this.snapSpeed(walkingTargetKmh(this.speedRange));
+      const moving = (this.last?.speedKmh ?? 0) >= speed;
+      const speedSent = moving ? 'confirmed' : await this.dispatch('set speed', (adapter) => adapter.encodeSetSpeed(speed));
+      if (started === 'rejected' && speedSent === 'rejected') {
+        throw new ControlRejectedError('The treadmill refused Start. Press Start in the app again.');
+      }
+      if (!moving) this.log(`Walking speed ${speed.toFixed(1)} km/h sent. This Kettler does not move at 0 km/h.`);
+    });
   }
 
   async stop(): Promise<void> {
@@ -202,7 +210,7 @@ export class WebBluetoothTransport implements TreadmillTransport {
       this.log('Control unsupported. Stop the belt on the treadmill if it is still moving.');
       return;
     }
-    await this.sendCommand('stop', (adapter) => adapter.encodeStop());
+    await this.enqueue(() => this.sendCommand('stop', (adapter) => adapter.encodeStop()));
   }
 
   async pause(): Promise<void> {
@@ -210,17 +218,42 @@ export class WebBluetoothTransport implements TreadmillTransport {
       this.log('Control unsupported. The run timer can pause here, but the belt may keep moving.');
       return;
     }
-    await this.sendCommand('pause', (adapter) => adapter.encodePause());
+    await this.enqueue(() => this.sendCommand('pause', (adapter) => adapter.encodePause()));
   }
 
   async setTargetSpeed(kmh: number): Promise<void> {
     if (!this.speedControlSupported) throw new ControlUnsupportedError();
-    await this.sendCommand('set speed', (adapter) => adapter.encodeSetSpeed(kmh));
+    const speed = this.snapSpeed(kmh);
+    await this.enqueue(() => this.sendCommand(`speed ${speed.toFixed(1)} km/h`, (adapter) => adapter.encodeSetSpeed(speed)));
   }
 
   async setTargetIncline(percent: number): Promise<void> {
     if (!this.inclineControlSupported) throw new ControlUnsupportedError();
-    await this.sendCommand('set incline', (adapter) => adapter.encodeSetIncline(percent));
+    const incline = snapToRange(
+      percent,
+      this.inclineRange && {
+        min: this.inclineRange.minPercent,
+        max: this.inclineRange.maxPercent,
+        step: this.inclineRange.incrementPercent,
+      },
+      { min: 0, max: 15, step: 0.5 },
+    );
+    await this.enqueue(() => this.sendCommand(`incline ${incline}%`, (adapter) => adapter.encodeSetIncline(incline)));
+  }
+
+  private snapSpeed(kmh: number): number {
+    return snapToRange(
+      kmh,
+      this.speedRange && { min: this.speedRange.minKmh, max: this.speedRange.maxKmh, step: this.speedRange.incrementKmh },
+      { min: 1, max: 18, step: 0.1 },
+    );
+  }
+
+  /** One control-point command at a time. The FTMS response names only the opcode, so parallel writes lose replies. */
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.commandChain.then(task, task);
+    this.commandChain = run.catch(() => undefined);
+    return run;
   }
 
   private async inspectAndSubscribe(deviceName: string): Promise<void> {
@@ -333,6 +366,19 @@ export class WebBluetoothTransport implements TreadmillTransport {
       }
     }
 
+    const inclineRange = characteristics.find((item) => sameUuid(item.uuid, FTMS_UUID.supportedInclinationRange));
+    if (inclineRange?.properties.read && inclineRange.readValue) {
+      try {
+        const decoded = parseSupportedInclineRange(await inclineRange.readValue());
+        if (decoded) {
+          this.inclineRange = decoded;
+          this.log(`Incline range ${decoded.minPercent}–${decoded.maxPercent}%, step ${decoded.incrementPercent}`);
+        }
+      } catch (error) {
+        this.log(`Could not read the incline range: ${messageOf(error)}`, 'warn');
+      }
+    }
+
     const training = characteristics.find((item) => sameUuid(item.uuid, 0x2ad3));
     if (training && (training.properties.notify || training.properties.indicate)) {
       try {
@@ -358,7 +404,7 @@ export class WebBluetoothTransport implements TreadmillTransport {
 
     if (this.controlSupported) {
       try {
-        await this.ensureControl();
+        await this.enqueue(() => this.ensureControl());
         this.statusDetail = 'Connected. Press Start in the app. This treadmill waits for a speed before the belt moves.';
       } catch (error) {
         this.log(`Request Control failed: ${messageOf(error)}`, 'warn');
@@ -372,43 +418,47 @@ export class WebBluetoothTransport implements TreadmillTransport {
     const request = this.adapter.encodeRequestControl();
     if (!request) throw new ControlUnsupportedError();
     this.log('Requesting FTMS control');
-    const accepted = await this.writeAndWait(FTMS_OPCODE_REQUEST, request);
-    this.controlGranted = true;
-    if (accepted) this.log('Control granted');
-    else this.log('Request Control was not confirmed. Commands will still be sent.', 'warn');
+    const outcome = await this.writeAndWait(FTMS_OPCODE_REQUEST, request);
+    this.controlGranted = outcome !== 'rejected';
+    if (outcome === 'confirmed') this.log('Control granted');
+    else if (outcome === 'timeout') this.log('Request Control was not confirmed. Commands will still be sent.', 'warn');
+    else throw new ControlRejectedError('The treadmill refused remote control.');
   }
 
-  private async dispatch(label: string, encode: (adapter: ProtocolAdapter) => Uint8Array | null): Promise<boolean> {
+  private async dispatch(
+    label: string,
+    encode: (adapter: ProtocolAdapter) => Uint8Array | null,
+  ): Promise<ControlOutcome> {
     if (!this.adapter || !this.controlPoint || !this.controlSupported) throw new ControlUnsupportedError();
     const payload = encode(this.adapter);
     if (!payload || payload.length === 0) throw new ControlUnsupportedError();
-    const accepted = await this.writeAndWait(payload[0] ?? 0, payload);
-    if (accepted) this.log(`Sent FTMS ${label}`);
-    else this.log(`FTMS ${label} was not confirmed`, 'warn');
-    return accepted;
+    const outcome = await this.writeAndWait(payload[0] ?? 0, payload);
+    if (outcome === 'confirmed') this.log(`Sent FTMS ${label}`);
+    else if (outcome === 'timeout') this.log(`Sent FTMS ${label}, no confirmation`, 'warn');
+    return outcome;
   }
 
+  /** A missing confirmation is logged, not thrown: Kettler sometimes applies a command without answering. */
   private async sendCommand(label: string, encode: (adapter: ProtocolAdapter) => Uint8Array | null): Promise<void> {
     await this.ensureControl();
-    const accepted = await this.dispatch(label, encode);
-    if (!accepted) throw new ControlUnsupportedError(`The treadmill did not confirm ${label}.`);
+    const outcome = await this.dispatch(label, encode);
+    if (outcome === 'rejected') throw new ControlRejectedError(`The treadmill refused ${label}.`);
   }
 
-  private async writeAndWait(opcode: number, payload: Uint8Array): Promise<boolean> {
+  private async writeAndWait(opcode: number, payload: Uint8Array): Promise<ControlOutcome> {
     const characteristic = this.controlPoint;
     if (!characteristic) throw new ControlUnsupportedError();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const response = new Promise<boolean>((resolve) => {
+    const response = new Promise<ControlOutcome>((resolve) => {
       timer = setTimeout(() => {
         if (this.pendingControl?.opcode === opcode) this.pendingControl = null;
-        this.log('Control point did not confirm the command', 'warn');
-        resolve(false);
+        resolve('timeout');
       }, 2500);
       this.pendingControl = {
         opcode,
-        resolve: (ok) => {
+        resolve: (outcome) => {
           if (timer) clearTimeout(timer);
-          resolve(ok);
+          resolve(outcome);
         },
       };
     });
@@ -420,7 +470,7 @@ export class WebBluetoothTransport implements TreadmillTransport {
       this.pendingControl = null;
       if (error instanceof ControlUnsupportedError) throw error;
       this.log(`Control write failed: ${messageOf(error)}`, 'error');
-      throw new ControlUnsupportedError();
+      throw new ControlRejectedError(`Control write failed: ${messageOf(error)}`);
     }
     return response;
   }
@@ -504,7 +554,7 @@ export class WebBluetoothTransport implements TreadmillTransport {
     if (response && this.pendingControl && response.requestOpcode === this.pendingControl.opcode) {
       const waiter = this.pendingControl;
       this.pendingControl = null;
-      waiter.resolve(response.success);
+      waiter.resolve(response.success ? 'confirmed' : 'rejected');
       if (!response.success) this.log(`FTMS control rejected (result ${response.resultCode})`, 'warn');
     } else {
       this.log(`Control point ${hex}`);

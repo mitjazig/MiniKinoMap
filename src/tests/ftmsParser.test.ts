@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { bytesToHex, hexToBytes } from '../utils/hex';
-import { encodeSetTargetIncline, encodeSetTargetSpeed, machineEventFromStatus, walkingTargetKmh } from '../treadmill/bluetooth/ftmsControl';
+import { encodeSetTargetIncline, encodeSetTargetSpeed, machineEventFromStatus, snapToRange, walkingTargetKmh } from '../treadmill/bluetooth/ftmsControl';
 import { FTMS_FLAG } from '../treadmill/bluetooth/ftmsConstants';
 import { buildFtmsTreadmillPacket } from '../treadmill/bluetooth/ftmsPacketBuilder';
 import { FtmsParseError, parseFtmsTreadmillData } from '../treadmill/bluetooth/FtmsTreadmillParser';
@@ -63,6 +63,17 @@ describe('FTMS treadmill parser', () => {
   it('keeps a Kettler walking speed inside the reported range', () => {
     expect(walkingTargetKmh({ minKmh: 1, maxKmh: 18, incrementKmh: 0.1 })).toBe(4);
     expect(walkingTargetKmh({ minKmh: 5, maxKmh: 18, incrementKmh: 0.1 }, 4)).toBe(5);
+  });
+
+  it('snaps incline to the Kettler 1% step and 0–15% range', () => {
+    const kettler = { min: 0, max: 15, step: 1 };
+    const fallback = { min: 0, max: 15, step: 0.5 };
+    expect(snapToRange(2.3, kettler, fallback)).toBe(2);
+    expect(snapToRange(2.6, kettler, fallback)).toBe(3);
+    expect(snapToRange(19, kettler, fallback)).toBe(15);
+    expect(snapToRange(-3, kettler, fallback)).toBe(0);
+    expect(snapToRange(2.3, null, fallback)).toBe(2.5);
+    expect(Array.from(encodeSetTargetIncline(snapToRange(3.4, kettler, fallback)))).toEqual([0x03, 30, 0]);
   });
 
   it('reads a console start from Fitness Machine Status', () => {

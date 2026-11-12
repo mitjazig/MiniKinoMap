@@ -134,6 +134,19 @@ export function walkingTargetKmh(range: SupportedSpeedRange | null, preferred = 
   return clamp(preferred, min, max);
 }
 
+/** Clamp to the machine range and round to its step. Kettler 07886-900 reports incline steps of 1%. */
+export function snapToRange(
+  value: number,
+  range: { min: number; max: number; step: number } | null,
+  fallback: { min: number; max: number; step: number },
+): number {
+  const min = range ? range.min : fallback.min;
+  const max = range && range.max > min ? range.max : fallback.max;
+  const step = range && range.step > 0 ? range.step : fallback.step;
+  const snapped = min + Math.round((clamp(value, min, max) - min) / step) * step;
+  return Number(clamp(snapped, min, max).toFixed(2));
+}
+
 /** Fitness Machine Status opcodes that mean the console changed the workout. */
 export function machineEventFromStatus(view: DataView): 'started' | 'paused' | 'stopped' | null {
   if (view.byteLength < 1) return null;

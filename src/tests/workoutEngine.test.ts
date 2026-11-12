@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { TreadmillTransport } from '../treadmill/TreadmillTransport';
+import { ControlRejectedError, type TreadmillTransport } from '../treadmill/TreadmillTransport';
 import type { ConnectionState, LogEntry, PacketTrace, TreadmillData } from '../treadmill/types';
 import { WorkoutEngine } from '../workout/WorkoutEngine';
 import { getRouteById } from '../routes/demoRoutes';
@@ -151,6 +151,29 @@ describe('WorkoutEngine', () => {
     const result = await workout.start();
     expect(result.ok).toBe(false);
     expect(workout.getSnapshot().phase).toBe('ready');
+  });
+
+  it('keeps sending auto incline after the treadmill refuses one command', async () => {
+    const belt = new FakeTransport();
+    const sent: number[] = [];
+    belt.setTargetIncline = (percent?: number) => {
+      sent.push(percent ?? Number.NaN);
+      return sent.length === 1 ? Promise.reject(new ControlRejectedError('refused')) : Promise.resolve();
+    };
+    const workout = new WorkoutEngine({
+      getRoute: getRouteById,
+      settings: () => ({ autoIncline: true, maxIncline: 12, weightKg: 75 }),
+    });
+    workout.use(belt);
+    await belt.connect();
+    workout.selectRoute('pine');
+    await workout.start();
+    for (let timestamp = 0; timestamp <= 600_000; timestamp += 500) {
+      belt.push({ timestamp, speedKmh: 6, distanceMeters: 0, elapsedSeconds: 0 });
+      await Promise.resolve();
+    }
+    expect(sent.length).toBeGreaterThan(1);
+    expect(workout.getSnapshot().autoInclineNote).toBeNull();
   });
 
   it('keeps progress when the connection drops and stays paused after reconnect', async () => {

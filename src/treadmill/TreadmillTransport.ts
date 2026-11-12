@@ -32,3 +32,11 @@ export class ControlUnsupportedError extends Error {
     this.name = 'ControlUnsupportedError';
   }
 }
+
+/** The treadmill answered and refused this one command. Later commands may still work. */
+export class ControlRejectedError extends Error {
+  constructor(message = 'The treadmill rejected the command') {
+    super(message);
+    this.name = 'ControlRejectedError';
+  }
+}

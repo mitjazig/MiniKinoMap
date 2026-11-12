@@ -282,6 +282,12 @@ export function WorkoutPage() {
           />
         )}
 
+        {!walking && plan.id === 'free' && route.elevationProfile.length === 0 ? (
+          <p className="text-sm leading-6 text-mist">
+            This route has no elevation profile, so Free Walk keeps the incline flat. Pick a workout such as a mountain
+            walk to change the incline.
+          </p>
+        ) : null}
         {workout.autoInclineNote ? <p className="text-sm text-mist">{workout.autoInclineNote}</p> : null}
         {actionError ? <p className="text-sm text-ember">{actionError}</p> : null}
         {connectionState !== 'connected' && workout.phase === 'idle' ? (
